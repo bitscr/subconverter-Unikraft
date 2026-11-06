@@ -1,4 +1,4 @@
-name: Publish Slim Docker and Unikraft Images
+name: Publish Slim Docker Image
 
 on:
   push:
@@ -104,25 +104,6 @@ jobs:
           while IFS= read -r tag; do
             docker push "$tag"
           done < <(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
-
-      - name: Install official Unikraft CLI
-        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
-        env:
-          UNIKRAFT_CLI_INSTALL_BIN_DIR: ${{ runner.temp }}/unikraft-bin
-        run: |
-          curl --proto '=https' --tlsv1.2 -fsSL https://unikraft.com/cli/install.sh | sh
-          echo "$UNIKRAFT_CLI_INSTALL_BIN_DIR" >> "$GITHUB_PATH"
-
-      - name: Package and publish Unikraft EROFS image
-        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
-        env:
-          IMAGE: ${{ steps.image.outputs.name }}
-        run: |
-          # Only repackage the tested image; do not compile the C++ app twice.
-          unikraft build ./unikraft \
-            --build-arg "IMAGE=$IMAGE:sha-$GITHUB_SHA" \
-            --output "$IMAGE:unikraft"
-          echo "Unikraft: \`$IMAGE:unikraft\`" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Show logs and clean up test containers
         if: always()

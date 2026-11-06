@@ -1,6 +1,6 @@
 # subconverter
 
-> 本分支已适配 1 GiB 限制的 Unikraft 精简部署。请先看 [部署说明](README-unikraft.md)：当前镜像由本仓库 Actions 发布到 GHCR，使用 HTTPS 443 → 内部 25500，不要照搬下方原版 Docker 镜像地址。
+> 本分支只发布一种适合 1 GiB 存储预算的精简 Docker 镜像。请先看 [Docker 部署说明](README-docker.md)：镜像由本仓库 Actions 发布到 GHCR，容器默认端口为 25500，不需要在 Action 中登录任何云平台。不要照搬下方原版镜像地址。
 
 在各种订阅格式之间进行转换的实用程序.
 

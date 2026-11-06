@@ -1,6 +1,6 @@
 # subconverter
 
-> This fork includes a slim 1 GiB Unikraft deployment and GHCR Actions build. See [Unikraft deployment (中文)](README-unikraft.md) for the current images, required API_TOKEN and HTTPS port mapping. The upstream Docker instructions below are historical.
+> This fork publishes one slim Docker image to GHCR, designed for a 1 GiB storage budget. See [Slim Docker deployment (中文)](README-docker.md) for the current image, API_TOKEN and port settings. The upstream image addresses below are historical.
 
 Utility to convert between various proxy subscription formats.
 
@@ -11,7 +11,7 @@ original git: https://github.com/asdlokj1qpi23/subconverter
 [![GitHub release](https://img.shields.io/github/release/asdlokj1qpi233/subconverter.svg)](https://github.com/asdlokj1qpi233/subconverter/releases)
 [![GitHub license](https://img.shields.io/github/license/asdlokj1qpi233/subconverter.svg)](https://github.com/tindy2013/subconverter/blob/master/LICENSE)
 
-[Docker README](https://github.com/asdlokj1qpi23/subconverter/blob/master/README-docker.md)
+[Docker README](README-docker.md)
 
 [中文文档](https://github.com/asdlokj1qpi23/subconverter/blob/master/README-cn.md)
 
