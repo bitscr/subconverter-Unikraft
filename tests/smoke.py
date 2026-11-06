@@ -14,6 +14,8 @@ api = sys.argv[1].rstrip("/")
 token = os.environ["API_TOKEN"]
 credentials = base64.urlsafe_b64encode(b"chacha20-ietf-poly1305:smoke-password").decode().rstrip("=")
 subscription = f"ss://{credentials}@example.com:443#smoke-node"
+# A normal SS subscription body is a Base64-encoded node list, not an inline URL.
+subscription_body = base64.b64encode((subscription + "\n").encode())
 
 
 class SubscriptionHandler(BaseHTTPRequestHandler):
@@ -21,7 +23,7 @@ class SubscriptionHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
-        self.wfile.write(subscription.encode())
+        self.wfile.write(subscription_body)
 
     def log_message(self, *_):
         pass
@@ -47,7 +49,13 @@ server = ThreadingHTTPServer(("0.0.0.0", 18080), SubscriptionHandler)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 for source in (subscription, "http://host.docker.internal:18080/subscription.txt"):
     for target in ("clash", "singbox"):
-        result = get("/sub?" + urlencode({"target": target, "url": source}))
+        try:
+            result = get("/sub?" + urlencode({"target": target, "url": source}))
+        except HTTPError as error:
+            raise AssertionError(
+                f"{target} conversion failed for {source}: HTTP {error.code}: "
+                + error.read().decode()
+            ) from error
         assert "smoke-node" in result and "example.com" in result, result
         if target == "clash":
             assert "proxies:" in result and "proxy-groups:" in result and "rules:" in result, result
