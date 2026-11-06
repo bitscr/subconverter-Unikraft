@@ -1,0 +1,11 @@
+# Build only the checked-out application, not Git history or local artifacts.
+.git
+.github
+build
+**/__pycache__
+**/*.pyc
+**/.DS_Store
+base/cache
+base/pref.ini
+base/pref.toml
+base/pref.yml

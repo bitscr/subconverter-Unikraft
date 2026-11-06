@@ -1,130 +1,132 @@
-name: Publish Docker Image
-on: 
-  push:
-    branches: [ master ]
-    tags:
-      - '**'
+name: Publish Slim Docker and Unikraft Images
 
-concurrency: 
+on:
+  push:
+    branches: [master, main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
   group: ${{ github.ref }}-${{ github.workflow }}
   cancel-in-progress: true
 
-env:
-  REGISTRY_IMAGE: asdlokj1qpi23/subconverter
-
 jobs:
   build:
-    strategy:
-      matrix:
-        include:
-          - platform: linux/amd64
-            os: ubuntu-latest
-          - platform: linux/386
-            os: ubuntu-latest
-          - platform: linux/arm/v7
-            os: ubuntu-latest
-          - platform: linux/arm64
-            os: ubuntu-latest
-    runs-on: ${{ matrix.os }}
-    name: Build ${{ matrix.platform }} Image
-    steps:
-      - name: Prepare
-        run: |
-          platform=${{ matrix.platform }}
-          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV    
-
-      - name: Checkout base
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY_IMAGE }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=raw,value=latest,enable={{is_default_branch}}
-
-      - name: Docker login
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Get commit SHA
-        if: github.ref == 'refs/heads/master'
-        id: vars
-        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-
-      - name: Build and export
-        id: build
-        uses: docker/build-push-action@v5
-        with:
-          platforms: ${{ matrix.platform }}
-          context: scripts/
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            SHA=${{ steps.vars.outputs.sha_short }}
-          outputs: type=image,name=${{ env.REGISTRY_IMAGE }},push-by-digest=true,name-canonical=true,push=true
-
-      - name: Export digest
-        run: |
-          rm -rf /tmp/digests
-          mkdir -p /tmp/digests
-          digest="${{ steps.build.outputs.digest }}"
-          touch "/tmp/digests/${digest#sha256:}"
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: digest-${{ env.PLATFORM_PAIR }}
-          path: /tmp/digests/*
-          if-no-files-found: error
-          retention-days: 1
-
-  merge:
-    name: Merge
-    needs: build
     runs-on: ubuntu-latest
+    env:
+      API_TOKEN: ci-smoke-token
     steps:
-      - name: Download digests
-        uses: actions/download-artifact@v4
-        with:
-          path: /tmp/digests
-          pattern: digest-*
-          merge-multiple: true
+      - name: Checkout current repository
+        uses: actions/checkout@v4
+
+      - name: Set image name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Docker meta
+      - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY_IMAGE }}
+          images: ${{ steps.image.outputs.name }}
           tags: |
-            type=semver,pattern={{version}}
             type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long
+            type=semver,pattern={{version}}
 
-      - name: Docker login
+      - name: Login to GitHub Container Registry
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create manifest list and push
-        working-directory: /tmp/digests
-        run: |
-          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.REGISTRY_IMAGE }}@sha256:%s ' *)      
+      - name: Build current source for linux/amd64
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.local
+          platforms: linux/amd64
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=subconverter-amd64
+          cache-to: type=gha,scope=subconverter-amd64,mode=max
 
-      - name: Inspect image
+      - name: Check image size
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
         run: |
-          docker buildx imagetools inspect ${{ env.REGISTRY_IMAGE }}:${{ steps.meta.outputs.version }}
+          size=$(docker image inspect "$IMAGE" --format '{{.Size}}')
+          echo "Uncompressed Docker image: $((size / 1024 / 1024)) MiB"
+          # Leave room within the user's 1 GiB budget for the runtime and platform.
+          test "$size" -le $((200 * 1024 * 1024))
+          echo "### Slim image" >> "$GITHUB_STEP_SUMMARY"
+          echo "Docker: \`$IMAGE\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "Uncompressed size: $((size / 1024 / 1024)) MiB (limit: 200 MiB)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Smoke test read-only rootfs and port override
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+        run: |
+          docker run -d --rm --name subconverter-ci-default \
+            --read-only --tmpfs /tmp:rw,nosuid,size=64m \
+            --memory 512m --cpus 1 \
+            --add-host host.docker.internal:host-gateway \
+            -e API_TOKEN -p 127.0.0.1:25500:25500 "$IMAGE"
+          python3 tests/smoke.py http://127.0.0.1:25500
+
+          docker run -d --rm --name subconverter-ci-port \
+            --read-only --tmpfs /tmp:rw,nosuid,size=64m \
+            --memory 512m --cpus 1 \
+            --add-host host.docker.internal:host-gateway \
+            -e API_TOKEN -e PORT=8080 -p 127.0.0.1:25501:8080 "$IMAGE"
+          python3 tests/smoke.py http://127.0.0.1:25501
+
+          for port in 0 65536 abc 25500x; do
+            status=0
+            docker run --rm --read-only --tmpfs /tmp:rw,nosuid,size=64m \
+              -e API_TOKEN -e PORT="$port" "$IMAGE" || status=$?
+            test "$status" -eq 1
+          done
+
+      - name: Publish tested Docker image
+        if: github.event_name != 'pull_request'
+        run: |
+          while IFS= read -r tag; do
+            docker push "$tag"
+          done < <(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+
+      - name: Install official Unikraft CLI
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+        env:
+          UNIKRAFT_CLI_INSTALL_BIN_DIR: ${{ runner.temp }}/unikraft-bin
+        run: |
+          curl --proto '=https' --tlsv1.2 -fsSL https://unikraft.com/cli/install.sh | sh
+          echo "$UNIKRAFT_CLI_INSTALL_BIN_DIR" >> "$GITHUB_PATH"
+
+      - name: Package and publish Unikraft EROFS image
+        if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: |
+          # Only repackage the tested image; do not compile the C++ app twice.
+          unikraft build ./unikraft \
+            --build-arg "IMAGE=$IMAGE:sha-$GITHUB_SHA" \
+            --output "$IMAGE:unikraft"
+          echo "Unikraft: \`$IMAGE:unikraft\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Show logs and clean up test containers
+        if: always()
+        run: |
+          docker logs subconverter-ci-default || true
+          docker logs subconverter-ci-port || true
+          docker rm -f subconverter-ci-default subconverter-ci-port || true

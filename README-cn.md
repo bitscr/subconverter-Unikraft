@@ -1,5 +1,7 @@
 # subconverter
 
+> 本分支已适配 1 GiB 限制的 Unikraft 精简部署。请先看 [部署说明](README-unikraft.md)：当前镜像由本仓库 Actions 发布到 GHCR，使用 HTTPS 443 → 内部 25500，不要照搬下方原版 Docker 镜像地址。
+
 在各种订阅格式之间进行转换的实用程序.
 
 [![Build Status](https://github.com/tindy2013/subconverter/actions/workflows/build.yml/badge.svg)](https://github.com/tindy2013/subconverter/actions)

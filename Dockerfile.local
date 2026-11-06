@@ -1,57 +1,47 @@
-FROM alpine:3.16 AS builder
-LABEL maintainer="feisan"
-ARG THREADS="4"
+# Build on GitHub Actions, never on the 1 GiB deployment instance.
+FROM alpine:3.22 AS builder
+ARG THREADS=2
 
-WORKDIR /
-RUN set -xe && \
-    apk add --no-cache --virtual .build-tools git g++ build-base linux-headers cmake python3 && \
-    apk add --no-cache --virtual .build-deps curl-dev rapidjson-dev pcre2-dev yaml-cpp-dev && \
-    git clone --no-checkout https://github.com/ftk/quickjspp.git && \
-    cd quickjspp && \
-    git fetch origin 0c00c48895919fc02da3f191a2da06addeb07f09 && \
-    git checkout 0c00c48895919fc02da3f191a2da06addeb07f09 && \
-    git submodule update --init && \
-    cmake -DCMAKE_BUILD_TYPE=Release . && \
-    make quickjs -j $THREADS && \
-    install -d /usr/lib/quickjs/ && \
-    install -m644 quickjs/libquickjs.a /usr/lib/quickjs/ && \
-    install -d /usr/include/quickjs/ && \
-    install -m644 quickjs/quickjs.h quickjs/quickjs-libc.h /usr/include/quickjs/ && \
-    install -m644 quickjspp.hpp /usr/include && \
-    cd .. && \
-    git clone https://github.com/PerMalmberg/libcron --depth=1 && \
-    cd libcron && \
-    git submodule update --init && \
-    cmake -DCMAKE_BUILD_TYPE=Release . && \
-    make libcron -j $THREADS && \
-    install -m644 libcron/out/Release/liblibcron.a /usr/lib/ && \
-    install -d /usr/include/libcron/ && \
-    install -m644 libcron/include/libcron/* /usr/include/libcron/ && \
-    install -d /usr/include/date/ && \
-    install -m644 libcron/externals/date/include/date/* /usr/include/date/ && \
-    cd .. && \
-    git clone https://github.com/ToruNiina/toml11 --branch="v4.3.0" --depth=1 && \
-    cd toml11 && \
-    cmake -DCMAKE_CXX_STANDARD=11 . && \
-    make install -j $THREADS && \
-    cd ..
+RUN apk add --no-cache build-base cmake ninja git pkgconf linux-headers \
+    curl-dev pcre2-dev yaml-cpp-dev rapidjson-dev
 
-# Copy local source instead of cloning from GitHub
-COPY . /subconverter
-WORKDIR /subconverter
-RUN python3 -m ensurepip && \
-    python3 -m pip install gitpython && \
-    python3 scripts/update_rules.py -c scripts/rules_config.conf && \
-    cmake -DCMAKE_BUILD_TYPE=Release . && \
-    make -j $THREADS
+WORKDIR /deps
+RUN git clone https://github.com/ftk/quickjspp.git && \
+    git -C quickjspp checkout 0c00c48895919fc02da3f191a2da06addeb07f09 && \
+    cmake -S quickjspp -B quickjspp/build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF && \
+    cmake --build quickjspp/build --target quickjs --parallel "$THREADS" && \
+    install -Dm644 quickjspp/build/quickjs/libquickjs.a /usr/local/lib/quickjs/libquickjs.a && \
+    install -Dm644 quickjspp/quickjs/quickjs.h /usr/local/include/quickjs/quickjs.h && \
+    install -Dm644 quickjspp/quickjs/quickjs-libc.h /usr/local/include/quickjs/quickjs-libc.h
 
-# build final image
-FROM alpine:3.16
-RUN apk add --no-cache --virtual subconverter-deps pcre2 libcurl yaml-cpp
-COPY --from=builder /subconverter/subconverter /usr/bin/
-COPY --from=builder /subconverter/base /base/
-ENV TZ=Africa/Abidjan
-RUN ln -sf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
-WORKDIR /base
-CMD subconverter
+RUN git clone --branch v1.3.3 --depth 1 --recurse-submodules https://github.com/PerMalmberg/libcron.git && \
+    cmake -S libcron -B libcron/build -G Ninja -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build libcron/build --target libcron --parallel "$THREADS" && \
+    cmake --install libcron/build
+
+RUN git clone --branch v4.3.0 --depth 1 https://github.com/ToruNiina/toml11.git && \
+    cmake -S toml11 -B toml11/build -G Ninja -DBUILD_TESTING=OFF && \
+    cmake --install toml11/build
+
+WORKDIR /src
+COPY CMakeLists.txt ./
+COPY cmake/ cmake/
+COPY include/ include/
+COPY src/ src/
+RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_CXX_FLAGS_RELEASE="-Os -DNDEBUG" && \
+    cmake --build build --parallel "$THREADS" && \
+    strip build/subconverter
+
+FROM alpine:3.22
+RUN apk add --no-cache ca-certificates libcurl pcre2 yaml-cpp libstdc++
+COPY --from=builder /src/build/subconverter /usr/bin/subconverter
+# Keep the small bundled templates/rules; do not download additional rule packs.
+COPY base/ /base/
+COPY unikraft/pref.ini /base/pref.ini
+COPY --chmod=755 unikraft/entrypoint.sh /usr/local/bin/subconverter-entrypoint
+ENV TZ=UTC
+WORKDIR /tmp/subconverter
 EXPOSE 25500/tcp
+ENTRYPOINT ["/usr/local/bin/subconverter-entrypoint"]

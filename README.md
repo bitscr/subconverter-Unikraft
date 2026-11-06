@@ -1,5 +1,7 @@
 # subconverter
 
+> This fork includes a slim 1 GiB Unikraft deployment and GHCR Actions build. See [Unikraft deployment (中文)](README-unikraft.md) for the current images, required API_TOKEN and HTTPS port mapping. The upstream Docker instructions below are historical.
+
 Utility to convert between various proxy subscription formats.
 
 original git: https://github.com/asdlokj1qpi23/subconverter

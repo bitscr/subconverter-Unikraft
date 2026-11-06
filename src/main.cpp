@@ -1,3 +1,4 @@
+#include <charconv>
 #include <iostream>
 #include <string>
 #include <unistd.h>
@@ -163,6 +164,18 @@ int main(int argc, char *argv[])
 
     SetConsoleTitle("SubConverter " VERSION);
     readConf();
+    const std::string env_port = getEnv("PORT");
+    if(!env_port.empty())
+    {
+        int port = 0;
+        const auto [end, error] = std::from_chars(env_port.data(), env_port.data() + env_port.size(), port);
+        if(error != std::errc{} || end != env_port.data() + env_port.size() || port < 1 || port > 65535)
+        {
+            writeLog(0, "PORT must be an integer between 1 and 65535.", LOG_LEVEL_FATAL);
+            return 1;
+        }
+        global.listenPort = port;
+    }
     //vfs::vfs_read("vfs.ini");
     if(!global.updateRulesetOnRequest)
         refreshRulesets(global.customRulesets, global.rulesetsContent);
